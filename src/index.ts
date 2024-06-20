@@ -32,26 +32,71 @@ app.post(
     next: NextFunction
   ) => {
     try {
-      const { url } = req.body;
+      const { url, token } = req.body;
 
       if (!url) {
         return res.status(400).json({
           success: false,
-          message: 'Missing url parameter',
+          message: "Missing url parameter",
         });
       }
-  
-      browser = await puppeteer.launch();
+
+      browser = await puppeteer.launch({
+        headless: true,
+        args: [
+          "--autoplay-policy=no-user-gesture-required",
+          "--disable-infobars",
+          "--disable-web-security",
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-features=IsolateOrigins,site-per-process",
+          "--disable-site-isolation-trials",
+          "--start-fullscreen",
+          "--use-fake-ui-for-media-stream",
+          "--use-fake-device-for-media-stream",
+        ],
+      });
+
       page = await browser.newPage();
-      recorder = new PuppeteerScreenRecorder(page);
+      await page.setViewport({ width: 1280, height: 720 });
+
+      if (token) {
+        await page.setCookie({
+          name: "_session",
+          value: token,
+          domain: new URL(url).hostname,
+          path: "/",
+        });
+  
+      }
+
+      const context = browser.defaultBrowserContext();
+      await context.overridePermissions(url, ['microphone', 'camera', 'geolocation']);
+
+      const options = {
+        followNewTab: true,
+        fps: 25,
+        videoFrame: {
+          width: 1280,
+          height: 720,
+        },
+        aspectRatio: '16:9',
+        audio: true,
+      };
+
+      recorder = new PuppeteerScreenRecorder(page, options);
       await recorder.start(`./output/${generateFileName()}/video.mp4`);
-      await page.goto(url);
+
+      await page.goto(url, { waitUntil: 'networkidle2' });
       res.status(200).json({
         success: true,
         message: "Recording started",
       });
     } catch (err) {
-      next(err);
+      res.status(500).json({
+        success: false,
+        message: "Recording failed",
+      });
     }
   }
 );
@@ -77,7 +122,10 @@ app.post(
         });
       }
     } catch (err) {
-      next(err);
+      res.status(500).json({
+        success: false,
+        message: "Recording failed",
+      });
     }
   }
 );
