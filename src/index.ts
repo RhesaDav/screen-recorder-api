@@ -7,12 +7,13 @@ import ffmpeg from "fluent-ffmpeg";
 import ffmpegStatic from "ffmpeg-static";
 import path from "path";
 import fs from "fs"
+import { getStream, launch, wss } from "puppeteer-stream";
 
 const app = express();
 app.use(express.json());
 
 let browser: Browser | null = null;
-let page: Page | null = null;
+let page: any = null;
 let recorder: PuppeteerScreenRecorder | null = null;
 
 function generateFileName(): string {
@@ -27,6 +28,32 @@ function generateFileName(): string {
   const fileName = `doctor_pasien_${year}${month}${day}_${hours}${minutes}${seconds}`;
   return fileName;
 }
+
+const file = fs.createWriteStream(__dirname + "/test.webm");
+
+app.post("/test", async(req: Request, res:Response) => {
+  const browser = await puppeteer.launch({
+  		defaultViewport: {
+			width: 1920,
+			height: 1080,
+		},
+	});
+
+	const page = await browser.newPage();
+	await page.goto("https://www.youtube.com/watch?v=QVm59vg-r9c&ab_channel=Dexter48");
+	const stream = await getStream(page as any, { audio: true, video: true });
+	console.log("recording");
+
+	stream.pipe(file);
+	setTimeout(async () => {
+		await stream.destroy();
+		file.close();
+		console.log("finished");
+
+		await browser.close();
+		(await wss).close();
+	}, 1000 * 10)
+})
 
 app.post(
   "/record-screen",
