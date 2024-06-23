@@ -3,6 +3,10 @@ import { PuppeteerScreenRecorder } from "puppeteer-screen-recorder";
 import puppeteer, { Browser, Page } from "puppeteer";
 import ErrorHandler from "./middlewares/errorHandler";
 import { RecordScreenRequest } from "./types";
+import ffmpeg from "fluent-ffmpeg";
+import ffmpegStatic from "ffmpeg-static";
+import path from "path";
+import fs from "fs"
 
 const app = express();
 app.use(express.json());
@@ -87,6 +91,7 @@ app.post(
       recorder = new PuppeteerScreenRecorder(page, options);
       await recorder.start(`./output/${generateFileName()}/video.mp4`);
 
+
       await page.goto(url, { waitUntil: 'networkidle2' });
       res.status(200).json({
         success: true,
@@ -129,6 +134,73 @@ app.post(
     }
   }
 );
+
+app.post(
+  "/generate-wav",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { fileName } = req.body;
+
+      if (!fileName) {
+        return res.status(400).json({
+          success: false,
+          message: "Missing fileName parameter",
+        });
+      }
+
+      const inputPath = path.join(__dirname, "output", fileName, "video.mp4");
+      const outputPath = path.join(__dirname, "output", fileName, "audio.wav");
+
+      if (!fs.existsSync(inputPath)) {
+        return res.status(404).json({
+          success: false,
+          message: "Video file not found",
+        });
+      }
+
+      ffmpeg.setFfmpegPath(ffmpegStatic as string);
+
+      ffmpeg(inputPath)
+        .outputOptions("-acodec pcm_s16le")
+        .outputOptions("-ar 44100")  
+        .outputOptions("-ac 2")      
+        .outputOptions("-vn")
+        .output(outputPath)
+        .on("start", (commandLine) => {
+          console.log("FFmpeg process started:", commandLine);
+        })
+        .on("progress", (progress) => {
+          console.log("Processing: " + progress.percent + "% done");
+        })
+        .on("end", () => {
+          res.status(200).json({
+            success: true,
+            message: "WAV file generated successfully",
+            wavPath: outputPath,
+          });
+        })
+        .on("error", (err, stdout, stderr) => {
+          console.error("Error generating WAV:", err);
+          console.error("FFmpeg stdout:", stdout);
+          console.error("FFmpeg stderr:", stderr);
+          res.status(500).json({
+            success: false,
+            message: "Failed to generate WAV file",
+            error: err.message,
+          });
+        })
+        .run();
+    } catch (err) {
+      console.error("Error in generate-wav endpoint:", err);
+      res.status(500).json({
+        success: false,
+        message: "An error occurred while generating WAV file",
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+);
+
 
 app.use(ErrorHandler);
 
