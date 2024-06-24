@@ -30,6 +30,7 @@ app.get("/start", async (req, res) => {
   try {
     browser = await launch({
       executablePath: executablePath(),
+      // headless: true,
       // executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
       // or on linux: "google-chrome-stable"
       // or on mac: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
@@ -40,7 +41,7 @@ app.get("/start", async (req, res) => {
       args: [
           // "--no-sandbox"
         //   "--disable-setuid-sandbox",
-        // "--headless=new",
+        "--headless=new",
         // "--use-fake-ui-for-media-stream",
       ],
       ignoreDefaultArgs: ["--mute-audio"],
@@ -51,8 +52,8 @@ app.get("/start", async (req, res) => {
     );
     console.log(urlObj)
 
-    // const context = browser.defaultBrowserContext();
-    // await context.overridePermissions(urlObj.origin, ["microphone"]);
+    const context = browser.defaultBrowserContext();
+    await context.overridePermissions(urlObj.origin, ["microphone", "camera"]);
     page = await browser.newPage();
     await page.goto(urlObj.href);
 
