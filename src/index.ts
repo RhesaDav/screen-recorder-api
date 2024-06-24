@@ -1,8 +1,9 @@
 import express from "express";
 import { launch, getStream } from "puppeteer-stream";
-import {executablePath} from "puppeteer"
+import { executablePath } from "puppeteer";
 import fs from "fs";
 import path from "path";
+import ffmpeg from "fluent-ffmpeg";
 
 const app = express();
 const port = 3000;
@@ -10,7 +11,6 @@ const port = 3000;
 let browser: any;
 let page: any;
 let recorder: any;
-let ffmpegProcess: any = null;
 let fileName: string = "";
 
 app.use(express.json());
@@ -21,12 +21,13 @@ if (!fs.existsSync(recordingsDir)) {
 }
 
 app.get("/start", async (req, res) => {
-  const url = req.query.url as string
+  const url = req.query.url as string;
   if (!url) {
     return res.status(400).json({
-      message: "Missing url body"
-    })
+      message: "Missing url query parameter"
+    });
   }
+  
   try {
     browser = await launch({
       executablePath: executablePath(),
@@ -47,10 +48,8 @@ app.get("/start", async (req, res) => {
       ignoreDefaultArgs: ["--mute-audio"],
     });
 
-    const urlObj = new URL(
-      url
-    );
-    console.log(urlObj)
+    const urlObj = new URL(url);
+    console.log("URL:", urlObj);
 
     const context = browser.defaultBrowserContext();
     await context.overridePermissions(urlObj.origin, ["microphone", "camera"]);
@@ -64,10 +63,12 @@ app.get("/start", async (req, res) => {
       audioBitsPerSecond: 2500000
     });
 
-    const fileName = `recording_${Date.now()}`;
+    fileName = `recording_${Date.now()}`;
     const outputPath = path.join(recordingsDir, fileName);
 
     recorder = stream.pipe(fs.createWriteStream(`${outputPath}.webm`));
+
+    console.log("Recording started. File name:", fileName);
 
     res.json({ message: "Recording started", fileName });
   } catch (error) {
@@ -77,19 +78,60 @@ app.get("/start", async (req, res) => {
 });
 
 app.post("/stop", async (req, res) => {
+  console.log("Stop endpoint called. Recorder:", !!recorder, "File name:", fileName);
+  
   try {
-    if (recorder) {
+    if (recorder && fileName) {
       recorder.close();
       await page.close();
       await browser.close();
 
-      res.json({ message: "Recording stopped and saved" });
+      const webmPath = path.join(recordingsDir, `${fileName}.webm`);
+      const mp4Path = path.join(recordingsDir, `${fileName}.mp4`);
+      const wavPath = path.join(recordingsDir, `${fileName}.wav`);
+
+      console.log("WebM file path:", webmPath);
+
+      if (!fs.existsSync(webmPath)) {
+        throw new Error(`WebM file not found: ${webmPath}`);
+      }
+
+      console.log(`Converting ${webmPath} to MP4 and WAV`);
+
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(webmPath)
+          .outputOptions("-c:v libx264")
+          .outputOptions("-crf 23")
+          .outputOptions("-c:a aac")
+          .outputOptions("-b:a 128k")
+          .output(mp4Path)
+          .on("end", () => resolve())
+          .on("error", (err) => reject(err))
+          .run();
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(webmPath)
+          .outputOptions("-acodec pcm_s16le")
+          .outputOptions("-ac 2")
+          .output(wavPath)
+          .on("end", () => resolve())
+          .on("error", (err) => reject(err))
+          .run();
+      });
+
+      console.log("Conversion completed");
+
+      recorder = null;
+      fileName = "";
+
+      res.json({ message: "Recording stopped, saved, and converted to MP4 and WAV" });
     } else {
-      res.status(400).json({ error: "No active recording found" });
+      res.status(400).json({ error: "No active recording found or fileName not set" });
     }
-  } catch (error) {
-    console.error("Error stopping recording:", error);
-    res.status(500).json({ error: "Failed to stop recording" });
+  } catch (error:any) {
+    console.error("Error stopping recording or converting:", error);
+    res.status(500).json({ error: `Failed to stop recording or convert files: ${error.message}` });
   }
 });
 
