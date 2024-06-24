@@ -73,7 +73,7 @@ app.post(
       }
 
       browser = await puppeteer.launch({
-        headless: true,
+        headless: false,
         args: [
           "--autoplay-policy=no-user-gesture-required",
           "--disable-infobars",
