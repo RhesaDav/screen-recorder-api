@@ -1,9 +1,8 @@
 import express from "express";
-import puppeteer from "puppeteer";
 import { launch, getStream } from "puppeteer-stream";
+import {executablePath} from "puppeteer"
 import fs from "fs";
 import path from "path";
-import { spawn } from "child_process";
 
 const app = express();
 const port = 3000;
@@ -21,12 +20,17 @@ if (!fs.existsSync(recordingsDir)) {
   fs.mkdirSync(recordingsDir, { recursive: true });
 }
 
-app.post("/start", async (req, res) => {
+app.get("/start", async (req, res) => {
+  const url = req.query.url as string
+  if (!url) {
+    return res.status(400).json({
+      message: "Missing url body"
+    })
+  }
   try {
     browser = await launch({
-      headless: true,
-      // args: ['--no-sandbox', '--disable-setuid-sandbox', '--use-fake-ui-for-media-stream']
-      executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
+      executablePath: executablePath(),
+      // executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
       // or on linux: "google-chrome-stable"
       // or on mac: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
       defaultViewport: {
@@ -34,28 +38,29 @@ app.post("/start", async (req, res) => {
         height: 1080,
       },
       args: [
-      //   "--no-sandbox",
-      //   "--disable-setuid-sandbox",
-        "--use-fake-ui-for-media-stream",
+          // "--no-sandbox"
+        //   "--disable-setuid-sandbox",
+        // "--headless=new",
+        // "--use-fake-ui-for-media-stream",
       ],
       ignoreDefaultArgs: ["--mute-audio"],
     });
 
     const urlObj = new URL(
-      "https://www.youtube.com/watch?v=eMCphn3x-x4&ab_channel=Tiogra"
+      url
     );
+    console.log(urlObj)
 
-    const context = browser.defaultBrowserContext()
-await context.overridePermissions(urlObj.origin, ['camera', 'microphone'])
+    // const context = browser.defaultBrowserContext();
+    // await context.overridePermissions(urlObj.origin, ["microphone"]);
     page = await browser.newPage();
-    await page.goto(
-      urlObj.href
-    );
+    await page.goto(urlObj.href);
 
     const stream = await getStream(page, {
       audio: true,
       video: true,
       videoBitsPerSecond: 2500000,
+      audioBitsPerSecond: 2500000
     });
 
     const fileName = `recording_${Date.now()}`;
