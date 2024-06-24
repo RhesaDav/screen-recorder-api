@@ -1,97 +1,72 @@
-import express from "express";
-import { launch, getStream } from "puppeteer-stream";
-import {executablePath} from "puppeteer"
-import fs from "fs";
-import path from "path";
+import express from 'express';
+import puppeteer, { Browser, Page } from 'puppeteer';
+import path from 'path';
+import fs from 'fs';
 
 const app = express();
 const port = 3000;
 
-let browser: any;
-let page: any;
-let recorder: any;
-let ffmpegProcess: any = null;
-let fileName: string = "";
+let browser: Browser | null = null;
+let page: Page | null = null;
+let isRecording = false;
+const recordingPath = path.join(__dirname, '../recording.webm');
 
-app.use(express.json());
-
-const recordingsDir = path.join(__dirname, "..", "recordings");
-if (!fs.existsSync(recordingsDir)) {
-  fs.mkdirSync(recordingsDir, { recursive: true });
-}
-
-app.get("/start", async (req, res) => {
-  const url = req.query.url as string
-  if (!url) {
-    return res.status(400).json({
-      message: "Missing url body"
-    })
+app.get('/start', async (req, res) => {
+  if (isRecording) {
+    return res.status(400).send('Perekaman sudah dimulai');
   }
+
   try {
-    browser = await launch({
-      executablePath: executablePath(),
-      // executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
-      // or on linux: "google-chrome-stable"
-      // or on mac: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-      defaultViewport: {
-        width: 1920,
-        height: 1080,
-      },
-      args: [
-          // "--no-sandbox"
-        //   "--disable-setuid-sandbox",
-        // "--headless=new",
-        // "--use-fake-ui-for-media-stream",
-      ],
-      ignoreDefaultArgs: ["--mute-audio"],
-    });
-
-    const urlObj = new URL(
-      url
-    );
-    console.log(urlObj)
-
-    // const context = browser.defaultBrowserContext();
-    // await context.overridePermissions(urlObj.origin, ["microphone"]);
+    browser = await puppeteer.launch();
     page = await browser.newPage();
-    await page.goto(urlObj.href);
 
-    const stream = await getStream(page, {
-      audio: true,
-      video: true,
-      videoBitsPerSecond: 2500000,
-      audioBitsPerSecond: 2500000
-    });
+    await page.setViewport({ width: 1920, height: 1080 });
+    await page.goto('https://www.youtube.com/watch?v=eWrqOU0mdVc&ab_channel=Puranandastraiku');
 
-    const fileName = `recording_${Date.now()}`;
-    const outputPath = path.join(recordingsDir, fileName);
+    await page.screencast({ path: recordingPath as `${string}.webm` });
+    isRecording = true;
 
-    recorder = stream.pipe(fs.createWriteStream(`${outputPath}.webm`));
-
-    res.json({ message: "Recording started", fileName });
+    res.send('Perekaman dimulai');
   } catch (error) {
-    console.error("Error starting recording:", error);
-    res.status(500).json({ error: "Failed to start recording" });
+    console.error('Error:', error);
+    res.status(500).send('Terjadi kesalahan saat memulai perekaman');
   }
 });
 
-app.post("/stop", async (req, res) => {
-  try {
-    if (recorder) {
-      recorder.close();
-      await page.close();
-      await browser.close();
+app.get('/stop', async (req, res) => {
+  if (!isRecording) {
+    return res.status(400).send('Tidak ada perekaman yang sedang berlangsung');
+  }
 
-      res.json({ message: "Recording stopped and saved" });
-    } else {
-      res.status(400).json({ error: "No active recording found" });
+  try {
+    if (page) {
+      await page.screencast({ path: '' as `${string}.webm` });
     }
+
+    if (browser) {
+      await browser.close();
+    }
+
+    isRecording = false;
+    browser = null;
+    page = null;
+
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    res.download(recordingPath, 'screen_recording.webm', (err) => {
+      if (err) {
+        console.error('Error saat mengunduh:', err);
+        res.status(500).send('Terjadi kesalahan saat mengunduh file');
+      } else {
+        fs.unlinkSync(recordingPath);
+      }
+    });
   } catch (error) {
-    console.error("Error stopping recording:", error);
-    res.status(500).json({ error: "Failed to stop recording" });
+    console.error('Error:', error);
+    res.status(500).send('Terjadi kesalahan saat menghentikan perekaman');
   }
 });
 
 app.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}`);
+  console.log(`Server berjalan di http://localhost:${port}`);
 });
