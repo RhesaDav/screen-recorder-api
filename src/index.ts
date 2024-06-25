@@ -11,7 +11,7 @@ const port = 3000;
 let browser: any;
 let page: any;
 let recorder: any;
-let fileName: string = "";
+let directoryName: string = "";
 
 app.use(express.json());
 
@@ -22,12 +22,15 @@ if (!fs.existsSync(recordingsDir)) {
 
 app.get("/start", async (req, res) => {
   const url = req.query.url as string;
-  if (!url) {
+  const doctor = req.query.doctor as string;
+  const patient = req.query.patient as string;
+
+  if (!url || !doctor || !patient) {
     return res.status(400).json({
-      message: "Missing url query parameter"
+      message: "Missing url, doctor, or patient query parameter"
     });
   }
-  
+
   try {
     browser = await launch({
       executablePath: executablePath(),
@@ -63,14 +66,21 @@ app.get("/start", async (req, res) => {
       audioBitsPerSecond: 2500000
     });
 
-    fileName = `recording_${Date.now()}`;
-    const outputPath = path.join(recordingsDir, fileName);
+    const now = new Date();
+    const timestamp = now.toISOString().replace(/[:.]/g, "-");
+    directoryName = `recording_${doctor}_${patient}_${timestamp}`;
+    const outputPath = path.join(recordingsDir, directoryName);
 
-    recorder = stream.pipe(fs.createWriteStream(`${outputPath}.webm`));
+    if (!fs.existsSync(outputPath)) {
+      fs.mkdirSync(outputPath, { recursive: true });
+    }
 
-    console.log("Recording started. File name:", fileName);
+    const fileName = `recording_${timestamp}`;
+    recorder = stream.pipe(fs.createWriteStream(path.join(outputPath, `${fileName}.webm`)));
 
-    res.json({ message: "Recording started", fileName });
+    console.log("Recording started. Directory name:", directoryName);
+
+    res.json({ message: "Recording started", directoryName, fileName });
   } catch (error) {
     console.error("Error starting recording:", error);
     res.status(500).json({ error: "Failed to start recording" });
@@ -78,17 +88,19 @@ app.get("/start", async (req, res) => {
 });
 
 app.post("/stop", async (req, res) => {
-  console.log("Stop endpoint called. Recorder:", !!recorder, "File name:", fileName);
-  
+  console.log("Stop endpoint called. Recorder:", !!recorder, "Directory name:", directoryName);
+
   try {
-    if (recorder && fileName) {
+    if (recorder && directoryName) {
       recorder.close();
       await page.close();
       await browser.close();
 
-      const webmPath = path.join(recordingsDir, `${fileName}.webm`);
-      const mp4Path = path.join(recordingsDir, `${fileName}.mp4`);
-      const wavPath = path.join(recordingsDir, `${fileName}.wav`);
+      const outputPath = path.join(recordingsDir, directoryName);
+      const fileName = fs.readdirSync(outputPath).find(file => file.endsWith(".webm"))?.replace(".webm", "");
+      const webmPath = path.join(outputPath, `${fileName}.webm`);
+      const mp4Path = path.join(outputPath, `${fileName}.mp4`);
+      const wavPath = path.join(outputPath, `${fileName}.wav`);
 
       console.log("WebM file path:", webmPath);
 
@@ -123,13 +135,13 @@ app.post("/stop", async (req, res) => {
       console.log("Conversion completed");
 
       recorder = null;
-      fileName = "";
+      directoryName = "";
 
       res.json({ message: "Recording stopped, saved, and converted to MP4 and WAV" });
     } else {
-      res.status(400).json({ error: "No active recording found or fileName not set" });
+      res.status(400).json({ error: "No active recording found or directoryName not set" });
     }
-  } catch (error:any) {
+  } catch (error: any) {
     console.error("Error stopping recording or converting:", error);
     res.status(500).json({ error: `Failed to stop recording or convert files: ${error.message}` });
   }
