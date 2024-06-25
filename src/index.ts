@@ -4,6 +4,9 @@ import { executablePath } from "puppeteer";
 import fs from "fs";
 import path from "path";
 import ffmpeg from "fluent-ffmpeg";
+import { path as ffmpegPath } from '@ffmpeg-installer/ffmpeg';
+ffmpeg.setFfmpegPath(ffmpegPath);
+
 
 const app = express();
 const port = 3000;
@@ -100,7 +103,7 @@ app.post("/stop", async (req, res) => {
       const fileName = fs.readdirSync(outputPath).find(file => file.endsWith(".webm"))?.replace(".webm", "");
       const webmPath = path.join(outputPath, `${fileName}.webm`);
       const mp4Path = path.join(outputPath, `${fileName}.mp4`);
-      const wavPath = path.join(outputPath, `${fileName}.wav`);
+      const wavPath = path.join(outputPath, `${fileName}.mp3`);
 
       console.log("WebM file path:", webmPath);
 
@@ -110,12 +113,32 @@ app.post("/stop", async (req, res) => {
 
       console.log(`Converting ${webmPath} to MP4 and WAV`);
 
+      // await new Promise<void>((resolve, reject) => {
+      //   ffmpeg(webmPath)
+      //     .outputOptions("-c:v libx264")
+      //     .outputOptions("-crf 23")
+      //     .outputOptions("-c:a aac")
+      //     .outputOptions("-b:a 128k")
+      //     .output(mp4Path)
+      //     .on("end", () => resolve())
+      //     .on("error", (err) => reject(err))
+      //     .run();
+      // });
+
+      // await new Promise<void>((resolve, reject) => {
+      //   ffmpeg(webmPath)
+      //     .outputOptions("-acodec pcm_s16le")
+      //     .outputOptions("-ac 2")
+      //     .output(wavPath)
+      //     .on("end", () => resolve())
+      //     .on("error", (err) => reject(err))
+      //     .run();
+      // });
+
       await new Promise<void>((resolve, reject) => {
         ffmpeg(webmPath)
-          .outputOptions("-c:v libx264")
-          .outputOptions("-crf 23")
+          .outputOptions("-c:v copy")
           .outputOptions("-c:a aac")
-          .outputOptions("-b:a 128k")
           .output(mp4Path)
           .on("end", () => resolve())
           .on("error", (err) => reject(err))
@@ -124,8 +147,9 @@ app.post("/stop", async (req, res) => {
 
       await new Promise<void>((resolve, reject) => {
         ffmpeg(webmPath)
-          .outputOptions("-acodec pcm_s16le")
-          .outputOptions("-ac 2")
+          .outputOptions("-vn")
+          .outputOptions("-c:a libmp3lame")
+          .outputOptions("-q:a 2")
           .output(wavPath)
           .on("end", () => resolve())
           .on("error", (err) => reject(err))
