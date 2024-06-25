@@ -160,6 +160,7 @@ app.post("/stop", async (req, res) => {
 
       recorder = null;
       directoryName = "";
+      fs.unlink(webmPath, () => {});  // Remove the input file after conversion
 
       res.json({ message: "Recording stopped, saved, and converted to MP4 and WAV" });
     } else {
