@@ -11,10 +11,10 @@ ffmpeg.setFfmpegPath(ffmpegPath);
 const app = express();
 const port = 3000;
 
-let browser: any;
-let page: any;
-let recorder: any;
-let directoryName: string = "";
+let browsers = new Map();
+let pages = new Map();
+let recorders = new Map();
+let directoryNames = new Map();
 
 app.use(express.json());
 
@@ -35,7 +35,7 @@ app.get("/start", async (req, res) => {
   }
 
   try {
-    browser = await launch({
+    const browser = await launch({
       executablePath: executablePath(),
       // headless: true,
       // executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
@@ -59,8 +59,11 @@ app.get("/start", async (req, res) => {
 
     const context = browser.defaultBrowserContext();
     await context.overridePermissions(urlObj.origin, ["microphone", "camera"]);
-    page = await browser.newPage();
+    const page = await browser.newPage();
     await page.goto(urlObj.href);
+
+    browsers.set(url, browser);
+    pages.set(url, page);
 
     const stream = await getStream(page, {
       audio: true,
@@ -71,7 +74,7 @@ app.get("/start", async (req, res) => {
 
     const now = new Date();
     const timestamp = now.toISOString().replace(/[:.]/g, "-");
-    directoryName = `recording_${doctor}_${patient}_${timestamp}`;
+    const directoryName = `recording_${doctor}_${patient}_${timestamp}`;
     const outputPath = path.join(recordingsDir, directoryName);
 
     if (!fs.existsSync(outputPath)) {
@@ -79,9 +82,13 @@ app.get("/start", async (req, res) => {
     }
 
     const fileName = `recording_${timestamp}`;
-    recorder = stream.pipe(fs.createWriteStream(path.join(outputPath, `${fileName}.webm`)));
+    const writeStream = fs.createWriteStream(path.join(outputPath, `${fileName}.webm`));
+    const recorder = stream.pipe(writeStream);
 
-    console.log("Recording started. Directory name:", directoryName);
+    directoryNames.set(url, directoryName);
+    recorders.set(url, { recorder, writeStream });
+
+    console.log("Recording started. Directory name: ", directoryName, " Key: ", url);
 
     res.json({ message: "Recording started", directoryName, fileName });
   } catch (error) {
@@ -90,12 +97,18 @@ app.get("/start", async (req, res) => {
   }
 });
 
-app.post("/stop", async (req, res) => {
-  console.log("Stop endpoint called. Recorder:", !!recorder, "Directory name:", directoryName);
+app.get("/stop", async (req, res) => {
+  const key = req.query.url as string;
+  const recorderInfo = recorders.get(key);
+  const directoryName = directoryNames.get(key);
+  const browser = browsers.get(key);
+  const page = pages.get(key);
+
+  console.log("Stop endpoint called. Recorder:", !!recorderInfo.recorder, "Directory name:", directoryName, "Key: ", key);
 
   try {
-    if (recorder && directoryName) {
-      recorder.close();
+    if (recorderInfo && directoryName) {
+      recorderInfo.writeStream.end();
       await page.close();
       await browser.close();
 
@@ -112,28 +125,6 @@ app.post("/stop", async (req, res) => {
       }
 
       console.log(`Converting ${webmPath} to MP4 and WAV`);
-
-      // await new Promise<void>((resolve, reject) => {
-      //   ffmpeg(webmPath)
-      //     .outputOptions("-c:v libx264")
-      //     .outputOptions("-crf 23")
-      //     .outputOptions("-c:a aac")
-      //     .outputOptions("-b:a 128k")
-      //     .output(mp4Path)
-      //     .on("end", () => resolve())
-      //     .on("error", (err) => reject(err))
-      //     .run();
-      // });
-
-      // await new Promise<void>((resolve, reject) => {
-      //   ffmpeg(webmPath)
-      //     .outputOptions("-acodec pcm_s16le")
-      //     .outputOptions("-ac 2")
-      //     .output(wavPath)
-      //     .on("end", () => resolve())
-      //     .on("error", (err) => reject(err))
-      //     .run();
-      // });
 
       await new Promise<void>((resolve, reject) => {
         ffmpeg(webmPath)
@@ -158,8 +149,10 @@ app.post("/stop", async (req, res) => {
 
       console.log("Conversion completed");
 
-      recorder = null;
-      directoryName = "";
+      browsers.delete(key); // Remove from the map
+      pages.delete(key); // Remove from the map
+      recorders.delete(key); // Remove from the map
+      directoryNames.delete(key); // Remove from the map
       fs.unlink(webmPath, () => {});  // Remove the input file after conversion
 
       res.json({ message: "Recording stopped, saved, and converted to MP4 and WAV" });
