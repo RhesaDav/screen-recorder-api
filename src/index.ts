@@ -1,138 +1,170 @@
-import express, { Request, Response, NextFunction } from "express";
-import { PuppeteerScreenRecorder } from "puppeteer-screen-recorder";
-import puppeteer, { Browser, Page } from "puppeteer";
-import ErrorHandler from "./middlewares/errorHandler";
-import { RecordScreenRequest } from "./types";
+import express from "express";
+import { launch, getStream } from "puppeteer-stream";
+import { executablePath } from "puppeteer";
+import fs from "fs";
+import path from "path";
+import ffmpeg from "fluent-ffmpeg";
+// import { path as ffmpegPath } from '@ffmpeg-installer/ffmpeg';
+// ffmpeg.setFfmpegPath(ffmpegPath);
+
 
 const app = express();
+const port = 3002;
+
+let browsers = new Map();
+let pages = new Map();
+let recorders = new Map();
+let directoryNames = new Map();
+
 app.use(express.json());
 
-let browser: Browser | null = null;
-let page: Page | null = null;
-let recorder: PuppeteerScreenRecorder | null = null;
-
-function generateFileName(): string {
-  const currentDate = new Date();
-  const year = currentDate.getFullYear();
-  const month = String(currentDate.getMonth() + 1).padStart(2, "0");
-  const day = String(currentDate.getDate()).padStart(2, "0");
-  const hours = String(currentDate.getHours()).padStart(2, "0");
-  const minutes = String(currentDate.getMinutes()).padStart(2, "0");
-  const seconds = String(currentDate.getSeconds()).padStart(2, "0");
-
-  const fileName = `doctor_pasien_${year}${month}${day}_${hours}${minutes}${seconds}`;
-  return fileName;
+const recordingsDir = path.join(__dirname, "..", "recordings");
+if (!fs.existsSync(recordingsDir)) {
+  fs.mkdirSync(recordingsDir, { recursive: true });
 }
 
-app.post(
-  "/record-screen",
-  async (
-    req: Request<{}, {}, RecordScreenRequest>,
-    res: Response,
-    next: NextFunction
-  ) => {
-    try {
-      const { url, token } = req.body;
+app.get("/start", async (req, res) => {
+  const url = req.query.url as string;
+  const doctor = req.query.doctor as string;
+  const patient = req.query.patient as string;
 
-      if (!url) {
-        return res.status(400).json({
-          success: false,
-          message: "Missing url parameter",
-        });
-      }
-
-      browser = await puppeteer.launch({
-        headless: true,
-        args: [
-          "--autoplay-policy=no-user-gesture-required",
-          "--disable-infobars",
-          "--disable-web-security",
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-features=IsolateOrigins,site-per-process",
-          "--disable-site-isolation-trials",
-          "--start-fullscreen",
-          "--use-fake-ui-for-media-stream",
-          "--use-fake-device-for-media-stream",
-        ],
-      });
-
-      page = await browser.newPage();
-      await page.setViewport({ width: 1280, height: 720 });
-
-      if (token) {
-        await page.setCookie({
-          name: "_session",
-          value: token,
-          domain: new URL(url).hostname,
-          path: "/",
-        });
-  
-      }
-
-      const context = browser.defaultBrowserContext();
-      await context.overridePermissions(url, ['microphone', 'camera', 'geolocation']);
-
-      const options = {
-        followNewTab: true,
-        fps: 25,
-        videoFrame: {
-          width: 1280,
-          height: 720,
-        },
-        aspectRatio: '16:9',
-        audio: true,
-      };
-
-      recorder = new PuppeteerScreenRecorder(page, options);
-      await recorder.start(`./output/${generateFileName()}/video.mp4`);
-
-      await page.goto(url, { waitUntil: 'networkidle2' });
-      res.status(200).json({
-        success: true,
-        message: "Recording started",
-      });
-    } catch (err) {
-      res.status(500).json({
-        success: false,
-        message: "Recording failed",
-      });
-    }
+  if (!url || !doctor || !patient) {
+    return res.status(400).json({
+      message: "Missing url, doctor, or patient query parameter"
+    });
   }
-);
 
-app.post(
-  "/stop-record",
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      if (recorder && browser) {
-        await recorder.stop();
-        await browser.close();
-        browser = null;
-        page = null;
-        recorder = null;
-        res.status(200).json({
-          success: true,
-          message: "Recording stopped successfully",
-        });
-      } else {
-        res.status(400).json({
-          success: false,
-          message: "No active recording found",
-        });
-      }
-    } catch (err) {
-      res.status(500).json({
-        success: false,
-        message: "Recording failed",
-      });
+  try {
+    const browser = await launch({
+      executablePath: executablePath(),
+      // headless: true,
+      // executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
+      // or on linux: "google-chrome-stable"
+      // or on mac: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+      defaultViewport: {
+        width: 1920,
+        height: 1080,
+      },
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--headless=new",
+        // "--use-fake-ui-for-media-stream",
+      ],
+      ignoreDefaultArgs: ["--mute-audio"],
+    });
+
+    const urlObj = new URL(url);
+    console.log("URL:", urlObj);
+
+    const context = browser.defaultBrowserContext();
+    await context.overridePermissions(urlObj.origin, ["microphone", "camera"]);
+    const page = await browser.newPage();
+    await page.goto(urlObj.href);
+
+    browsers.set(url, browser);
+    pages.set(url, page);
+
+    const stream = await getStream(page, {
+      audio: true,
+      video: true,
+      videoBitsPerSecond: 2500000,
+      audioBitsPerSecond: 2500000
+    });
+
+    const now = new Date();
+    const timestamp = now.toISOString().replace(/[:.]/g, "-");
+    const directoryName = `recording_${doctor}_${patient}_${timestamp}`;
+    const outputPath = path.join(recordingsDir, directoryName);
+
+    if (!fs.existsSync(outputPath)) {
+      fs.mkdirSync(outputPath, { recursive: true });
     }
+
+    const fileName = `recording_${timestamp}`;
+    const writeStream = fs.createWriteStream(path.join(outputPath, `${fileName}.webm`));
+    const recorder = stream.pipe(writeStream);
+
+    directoryNames.set(url, directoryName);
+    recorders.set(url, { recorder, writeStream });
+
+    console.log("Recording started. Directory name: ", directoryName, " Key: ", url);
+
+    res.json({ message: "Recording started", directoryName, fileName });
+  } catch (error) {
+    console.error("Error starting recording:", error);
+    res.status(500).json({ error: "Failed to start recording" });
   }
-);
+});
 
-app.use(ErrorHandler);
+app.get("/stop", async (req, res) => {
+  const key = req.query.url as string;
+  const recorderInfo = recorders.get(key);
+  const directoryName = directoryNames.get(key);
+  const browser = browsers.get(key);
+  const page = pages.get(key);
 
-const PORT = 3000;
-app.listen(PORT, () => {
-  console.log(`Server started on port http://localhost:${PORT}`);
+  console.log("Stop endpoint called. Recorder:", !!recorderInfo.recorder, "Directory name:", directoryName, "Key: ", key);
+
+  try {
+    if (recorderInfo && directoryName) {
+      recorderInfo.writeStream.end();
+      await page.close();
+      await browser.close();
+
+      const outputPath = path.join(recordingsDir, directoryName);
+      const fileName = fs.readdirSync(outputPath).find(file => file.endsWith(".webm"))?.replace(".webm", "");
+      const webmPath = path.join(outputPath, `${fileName}.webm`);
+      const mp4Path = path.join(outputPath, `${fileName}.mp4`);
+      const wavPath = path.join(outputPath, `${fileName}.mp3`);
+
+      console.log("WebM file path:", webmPath);
+
+      if (!fs.existsSync(webmPath)) {
+        throw new Error(`WebM file not found: ${webmPath}`);
+      }
+
+      console.log(`Converting ${webmPath} to MP4 and WAV`);
+
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(webmPath)
+          .outputOptions("-c:v copy")
+          .outputOptions("-c:a aac")
+          .output(mp4Path)
+          .on("end", () => resolve())
+          .on("error", (err) => reject(err))
+          .run();
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(webmPath)
+          .outputOptions("-vn")
+          .outputOptions("-c:a libmp3lame")
+          .outputOptions("-q:a 2")
+          .output(wavPath)
+          .on("end", () => resolve())
+          .on("error", (err) => reject(err))
+          .run();
+      });
+
+      console.log("Conversion completed");
+
+      browsers.delete(key); // Remove from the map
+      pages.delete(key); // Remove from the map
+      recorders.delete(key); // Remove from the map
+      directoryNames.delete(key); // Remove from the map
+      fs.unlink(webmPath, () => {});  // Remove the input file after conversion
+
+      res.json({ message: "Recording stopped, saved, and converted to MP4 and WAV" });
+    } else {
+      res.status(400).json({ error: "No active recording found or directoryName not set" });
+    }
+  } catch (error: any) {
+    console.error("Error stopping recording or converting:", error);
+    res.status(500).json({ error: `Failed to stop recording or convert files: ${error.message}` });
+  }
+});
+
+app.listen(port, () => {
+  console.log(`Server running at http://localhost:${port}`);
 });
