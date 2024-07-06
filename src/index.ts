@@ -4,12 +4,12 @@ import { executablePath } from "puppeteer";
 import fs from "fs";
 import path from "path";
 import ffmpeg from "fluent-ffmpeg";
-import { path as ffmpegPath } from '@ffmpeg-installer/ffmpeg';
-ffmpeg.setFfmpegPath(ffmpegPath);
+// import { path as ffmpegPath } from '@ffmpeg-installer/ffmpeg';
+// ffmpeg.setFfmpegPath(ffmpegPath);
 
 
 const app = express();
-const port = 3000;
+const port = 3002;
 
 let browsers = new Map();
 let pages = new Map();
@@ -46,8 +46,8 @@ app.get("/start", async (req, res) => {
         height: 1080,
       },
       args: [
-          // "--no-sandbox"
-        //   "--disable-setuid-sandbox",
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
         "--headless=new",
         // "--use-fake-ui-for-media-stream",
       ],
