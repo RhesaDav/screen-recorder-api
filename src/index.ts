@@ -5,6 +5,10 @@ import fs from "fs";
 import path from "path";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegStatic from "ffmpeg-static";
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import dotenv from "dotenv"
+
+dotenv.config()
 
 ffmpeg.setFfmpegPath(ffmpegStatic as string);
 
@@ -21,6 +25,59 @@ interface RecordingSession {
 const activeSessions: Map<string, RecordingSession> = new Map();
 
 app.use(express.json());
+
+function checkAWSCredentials() {
+  const accessKeyId = process.env.AWS_ACCESS_KEY;
+  const secretAccessKey = process.env.AWS_SECRET_KEY;
+
+  if (!accessKeyId || !secretAccessKey) {
+    throw new Error("AWS credentials are missing. Please set AWS_ACCESS_KEY and AWS_SECRET_KEY environment variables.");
+  }
+
+  return { accessKeyId, secretAccessKey };
+}
+
+let s3Client: S3Client;
+try {
+  const { accessKeyId, secretAccessKey } = checkAWSCredentials();
+  s3Client = new S3Client({
+    region: "ap-southeast-1",
+    credentials: {
+      accessKeyId,
+      secretAccessKey,
+    },
+  });
+} catch (error) {
+  console.error("Error initializing S3 client:", error);
+  process.exit(1); 
+}
+
+async function uploadToS3(filePath: string, directoryName: string) {
+  if (!s3Client) {
+    throw new Error("S3 client is not initialized. Cannot upload file.");
+  }
+
+  const fileContent = fs.readFileSync(filePath);
+  const fileName = path.basename(filePath);
+  const s3Key = `vcall-recording/${directoryName}/${fileName}`;
+
+  const params = {
+    Bucket: "vcall-storage",
+    Key: s3Key,
+    Body: fileContent,
+  };
+
+  try {
+    await s3Client.send(new PutObjectCommand(params));
+    console.log(`File uploaded successfully to S3: ${s3Key}`);
+    return `https://s3.ap-southeast-1.amazonaws.com/vcall-storage/${s3Key}`;
+  } catch (error) {
+    console.error("Error uploading file to S3:", error);
+    throw error;
+  }
+}
+
+
 
 function dateToString(date: Date): string {
   const year = date.getFullYear();
@@ -175,6 +232,22 @@ app.get("/stop", async (req, res) => {
 
     console.log("Conversion completed");
 
+    let mp4Url, mp3Url;
+    try {
+      mp4Url = await uploadToS3(mp4Path, directoryName);
+      mp3Url = await uploadToS3(mp3Path, directoryName);
+
+      fs.unlinkSync(webmPath);
+      fs.unlinkSync(mp4Path);
+      fs.unlinkSync(mp3Path);
+    } catch (uploadError) {
+      console.error("Error uploading files to S3:", uploadError);
+      mp4Url = `local://${mp4Path}`;
+      mp3Url = `local://${mp3Path}`;
+    }
+
+    activeSessions.delete(url);
+
     fs.unlink(webmPath, (err) => {
       if (err) console.error("Failed to delete WebM file:", err);
     });
@@ -183,6 +256,8 @@ app.get("/stop", async (req, res) => {
 
     res.json({
       message: "Recording stopped, saved, and converted to MP4 and MP3",
+      mp4Url,
+      mp3Url
     });
   } catch (error) {
     console.error("Error stopping recording or converting:", error);
