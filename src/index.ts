@@ -4,12 +4,12 @@ import { executablePath } from "puppeteer";
 import fs from "fs";
 import path from "path";
 import ffmpeg from "fluent-ffmpeg";
-import { path as ffmpegPath } from '@ffmpeg-installer/ffmpeg';
-ffmpeg.setFfmpegPath(ffmpegPath);
+import ffmpegStatic from "ffmpeg-static"
 
+ffmpeg.setFfmpegPath(ffmpegStatic as string)
 
 const app = express();
-const port = 3000;
+const port = 3002;
 
 let browser: any;
 let page: any;
@@ -23,14 +23,16 @@ if (!fs.existsSync(recordingsDir)) {
   fs.mkdirSync(recordingsDir, { recursive: true });
 }
 
+const sanitizeFilename = (name: string) => name.replace(/[|&;$%@"<>()+,]/g, "");
+
 app.get("/start", async (req, res) => {
   const url = req.query.url as string;
-  const doctor = req.query.doctor as string;
-  const patient = req.query.patient as string;
+  const doctor = sanitizeFilename(req.query.doctor as string);
+  const patient = sanitizeFilename(req.query.patient as string);
 
   if (!url || !doctor || !patient) {
     return res.status(400).json({
-      message: "Missing url, doctor, or patient query parameter"
+      message: "Missing url, doctor, or patient query parameter",
     });
   }
 
@@ -46,7 +48,7 @@ app.get("/start", async (req, res) => {
         height: 1080,
       },
       args: [
-          // "--no-sandbox"
+        // "--no-sandbox"
         //   "--disable-setuid-sandbox",
         "--headless=new",
         // "--use-fake-ui-for-media-stream",
@@ -66,7 +68,7 @@ app.get("/start", async (req, res) => {
       audio: true,
       video: true,
       videoBitsPerSecond: 2500000,
-      audioBitsPerSecond: 2500000
+      audioBitsPerSecond: 2500000,
     });
 
     const now = new Date();
@@ -79,7 +81,9 @@ app.get("/start", async (req, res) => {
     }
 
     const fileName = `recording_${timestamp}`;
-    recorder = stream.pipe(fs.createWriteStream(path.join(outputPath, `${fileName}.webm`)));
+    recorder = stream.pipe(
+      fs.createWriteStream(path.join(outputPath, `${fileName}.webm`))
+    );
 
     console.log("Recording started. Directory name:", directoryName);
 
@@ -90,8 +94,13 @@ app.get("/start", async (req, res) => {
   }
 });
 
-app.post("/stop", async (req, res) => {
-  console.log("Stop endpoint called. Recorder:", !!recorder, "Directory name:", directoryName);
+app.get("/stop", async (req, res) => {
+  console.log(
+    "Stop endpoint called. Recorder:",
+    !!recorder,
+    "Directory name:",
+    directoryName
+  );
 
   try {
     if (recorder && directoryName) {
@@ -100,7 +109,10 @@ app.post("/stop", async (req, res) => {
       await browser.close();
 
       const outputPath = path.join(recordingsDir, directoryName);
-      const fileName = fs.readdirSync(outputPath).find(file => file.endsWith(".webm"))?.replace(".webm", "");
+      const fileName = fs
+        .readdirSync(outputPath)
+        .find((file) => file.endsWith(".webm"))
+        ?.replace(".webm", "");
       const webmPath = path.join(outputPath, `${fileName}.webm`);
       const mp4Path = path.join(outputPath, `${fileName}.mp4`);
       const wavPath = path.join(outputPath, `${fileName}.mp3`);
@@ -136,39 +148,54 @@ app.post("/stop", async (req, res) => {
       // });
 
       await new Promise<void>((resolve, reject) => {
-        ffmpeg(webmPath)
-          .outputOptions("-c:v copy")
-          .outputOptions("-c:a aac")
+        ffmpeg()
+          .input(webmPath)
+          .outputOptions('-c:v libx264')  // Use H.264 codec for video
+          .outputOptions('-crf 28')       // Increase CRF for lower quality (23 is default, higher values = lower quality)
+          .outputOptions('-preset faster')  // Use a faster preset for quicker encoding
+          .outputOptions('-c:a aac')      // Use AAC codec for audio
+          .outputOptions('-b:a 64k')      // Set audio bitrate to 64k for lower quality
+          .outputOptions('-vf scale=640:-2')  // Scale video to 640px width, maintain aspect ratio
           .output(mp4Path)
           .on("end", () => resolve())
           .on("error", (err) => reject(err))
           .run();
       });
-
+      
       await new Promise<void>((resolve, reject) => {
         ffmpeg(webmPath)
-          .outputOptions("-vn")
-          .outputOptions("-c:a libmp3lame")
-          .outputOptions("-q:a 2")
+          .outputOptions('-vn')  // Disable video
+          .outputOptions('-c:a libmp3lame')  // Use MP3 codec
+          .outputOptions('-b:a 64k')  // Set bitrate to 64k for lower quality
           .output(wavPath)
           .on("end", () => resolve())
           .on("error", (err) => reject(err))
           .run();
       });
-
       console.log("Conversion completed");
 
+      fs.unlink(webmPath, (err) => {
+        if (err) console.error("Failed to delete WebM file:", err);
+      });
+  
       recorder = null;
-      directoryName = "";
-      fs.unlink(webmPath, () => {});  // Remove the input file after conversion
+      directoryName = "";  
 
-      res.json({ message: "Recording stopped, saved, and converted to MP4 and WAV" });
+      res.json({
+        message: "Recording stopped, saved, and converted to MP4 and WAV",
+      });
     } else {
-      res.status(400).json({ error: "No active recording found or directoryName not set" });
+      res
+        .status(400)
+        .json({ error: "No active recording found or directoryName not set" });
     }
   } catch (error: any) {
     console.error("Error stopping recording or converting:", error);
-    res.status(500).json({ error: `Failed to stop recording or convert files: ${error.message}` });
+    res
+      .status(500)
+      .json({
+        error: `Failed to stop recording or convert files: ${error.message}`,
+      });
   }
 });
 
