@@ -116,6 +116,8 @@ app.get("/start", async (req, res) => {
         height: 1080,
       },
       args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
         "--headless=new",
       ],
       ignoreDefaultArgs: ["--mute-audio"],
