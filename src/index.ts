@@ -6,9 +6,9 @@ import path from "path";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegStatic from "ffmpeg-static";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
-import dotenv from "dotenv"
+import dotenv from "dotenv";
 
-dotenv.config()
+dotenv.config();
 
 ffmpeg.setFfmpegPath(ffmpegStatic as string);
 
@@ -31,7 +31,9 @@ function checkAWSCredentials() {
   const secretAccessKey = process.env.AWS_SECRET_KEY;
 
   if (!accessKeyId || !secretAccessKey) {
-    throw new Error("AWS credentials are missing. Please set AWS_ACCESS_KEY and AWS_SECRET_KEY environment variables.");
+    throw new Error(
+      "AWS credentials are missing. Please set AWS_ACCESS_KEY and AWS_SECRET_KEY environment variables."
+    );
   }
 
   return { accessKeyId, secretAccessKey };
@@ -49,7 +51,7 @@ try {
   });
 } catch (error) {
   console.error("Error initializing S3 client:", error);
-  process.exit(1); 
+  process.exit(1);
 }
 
 async function uploadToS3(filePath: string, directoryName: string) {
@@ -61,14 +63,15 @@ async function uploadToS3(filePath: string, directoryName: string) {
   const fileName = path.basename(filePath);
   const s3Key = `vcall-recording/${directoryName}/${fileName}`;
 
-  const params = {
-    Bucket: "vcall-storage",
-    Key: s3Key,
-    Body: fileContent,
-  };
-
   try {
-    await s3Client.send(new PutObjectCommand(params));
+    await s3Client.send(
+      new PutObjectCommand({
+        Bucket: "vcall-storage",
+        Key: s3Key,
+        Body: fileContent,
+        ACL: "public-read",
+      })
+    );
     console.log(`File uploaded successfully to S3: ${s3Key}`);
     return `https://s3.ap-southeast-1.amazonaws.com/vcall-storage/${s3Key}`;
   } catch (error) {
@@ -77,15 +80,13 @@ async function uploadToS3(filePath: string, directoryName: string) {
   }
 }
 
-
-
 function dateToString(date: Date): string {
   const year = date.getFullYear();
-  const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const day = date.getDate().toString().padStart(2, '0');
-  const hours = date.getHours().toString().padStart(2, '0');
-  const minutes = date.getMinutes().toString().padStart(2, '0');
-  const seconds = date.getSeconds().toString().padStart(2, '0');
+  const month = (date.getMonth() + 1).toString().padStart(2, "0");
+  const day = date.getDate().toString().padStart(2, "0");
+  const hours = date.getHours().toString().padStart(2, "0");
+  const minutes = date.getMinutes().toString().padStart(2, "0");
+  const seconds = date.getSeconds().toString().padStart(2, "0");
 
   return `${year}${month}${day}T${hours}${minutes}${seconds}`;
 }
@@ -95,7 +96,8 @@ if (!fs.existsSync(recordingsDir)) {
   fs.mkdirSync(recordingsDir, { recursive: true });
 }
 
-const sanitizeFilename = (name: string): string => name.replace(/[|&;$%@"<>()+, ]/g, "");
+const sanitizeFilename = (name: string): string =>
+  name.replace(/[|&;$%@"<>()+, ]/g, "");
 
 app.get("/start", async (req, res) => {
   const url = req.query.url as string;
@@ -115,9 +117,7 @@ app.get("/start", async (req, res) => {
         width: 1920,
         height: 1080,
       },
-      args: [
-        "--headless=new",
-      ],
+      args: ["--headless=new"],
       ignoreDefaultArgs: ["--mute-audio"],
     });
 
@@ -153,16 +153,24 @@ app.get("/start", async (req, res) => {
 
     console.log("Recording started. Directory name:", directoryName);
 
-    res.json({ message: "Recording started", directoryName, fileName, url: urlObj.href });
+    res.json({
+      message: "Recording started",
+      directoryName,
+      fileName,
+      url: urlObj.href,
+    });
   } catch (error) {
     console.error("Error starting recording:", error);
-    res.status(500).json({ error: "Failed to start recording", details: (error as Error).message });
+    res.status(500).json({
+      error: "Failed to start recording",
+      details: (error as Error).message,
+    });
   }
 });
 
 app.get("/stop", async (req, res) => {
   const url = req.query.url as string;
-  
+
   if (!url) {
     return res.status(400).json({ error: "Missing url query parameter" });
   }
@@ -172,7 +180,9 @@ app.get("/stop", async (req, res) => {
   try {
     const session = activeSessions.get(url);
     if (!session) {
-      return res.status(400).json({ error: "No active recording found for the given URL" });
+      return res
+        .status(400)
+        .json({ error: "No active recording found for the given URL" });
     }
 
     const { browser, page, recorder, directoryName } = session;
@@ -186,7 +196,7 @@ app.get("/stop", async (req, res) => {
       .readdirSync(outputPath)
       .find((file) => file.endsWith(".webm"))
       ?.replace(".webm", "");
-    
+
     if (!fileName) {
       throw new Error("WebM file not found in the output directory");
     }
@@ -206,28 +216,28 @@ app.get("/stop", async (req, res) => {
     await Promise.all([
       new Promise<void>((resolve, reject) => {
         ffmpeg()
-          .input(webmPath)                // Set the input WebM file to be converted
-          .outputOptions('-c:v libx264')  // Use the H.264 video codec for MP4 output
-          .outputOptions('-crf 28')       // Set the Constant Rate Factor (CRF) for video quality (higher CRF = lower quality)
-          .outputOptions('-preset faster') // Set a faster preset for quicker encoding
-          .outputOptions('-c:a aac')      // Use AAC audio codec for MP4 output
-          .outputOptions('-b:a 64k')      // Set audio bitrate for MP4
-          .outputOptions('-vf scale=640:-2') // Scale video to 640 pixels wide, maintain aspect ratio
-          .output(mp4Path)                // Specify the output path for MP4 file
-          .on("end", () => resolve())     // Resolve promise when conversion completes
+          .input(webmPath) // Set the input WebM file to be converted
+          .outputOptions("-c:v libx264") // Use the H.264 video codec for MP4 output
+          .outputOptions("-crf 28") // Set the Constant Rate Factor (CRF) for video quality (higher CRF = lower quality)
+          .outputOptions("-preset faster") // Set a faster preset for quicker encoding
+          .outputOptions("-c:a aac") // Use AAC audio codec for MP4 output
+          .outputOptions("-b:a 64k") // Set audio bitrate for MP4
+          .outputOptions("-vf scale=640:-2") // Scale video to 640 pixels wide, maintain aspect ratio
+          .output(mp4Path) // Specify the output path for MP4 file
+          .on("end", () => resolve()) // Resolve promise when conversion completes
           .on("error", (err) => reject(err)) // Reject promise on error
-          .run();                         // Execute ffmpeg conversion
+          .run(); // Execute ffmpeg conversion
       }),
       new Promise<void>((resolve, reject) => {
-        ffmpeg(webmPath)                 // Set the input WebM file to be converted
-          .outputOptions('-vn')          // Disable video output
-          .outputOptions('-c:a libmp3lame') // Use MP3 audio codec (libmp3lame) for MP3 output
-          .outputOptions('-b:a 64k')     // Set audio bitrate for MP3
-          .output(mp3Path)               // Specify the output path for MP3 file
-          .on("end", () => resolve())    // Resolve promise when conversion completes
+        ffmpeg(webmPath) // Set the input WebM file to be converted
+          .outputOptions("-vn") // Disable video output
+          .outputOptions("-c:a libmp3lame") // Use MP3 audio codec (libmp3lame) for MP3 output
+          .outputOptions("-b:a 64k") // Set audio bitrate for MP3
+          .output(mp3Path) // Specify the output path for MP3 file
+          .on("end", () => resolve()) // Resolve promise when conversion completes
           .on("error", (err) => reject(err)) // Reject promise on error
-          .run();                        // Execute ffmpeg conversion
-      })
+          .run(); // Execute ffmpeg conversion
+      }),
     ]);
 
     console.log("Conversion completed");
@@ -257,7 +267,7 @@ app.get("/stop", async (req, res) => {
     res.json({
       message: "Recording stopped, saved, and converted to MP4 and MP3",
       mp4Url,
-      mp3Url
+      mp3Url,
     });
   } catch (error) {
     console.error("Error stopping recording or converting:", error);
