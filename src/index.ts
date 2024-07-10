@@ -5,10 +5,15 @@ import fs from "fs";
 import path from "path";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegStatic from "ffmpeg-static";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
 import dotenv from "dotenv";
-import { dateToString, sanitizeFilename } from "./utils";
-import { Pool } from "pg";
+import {
+  dateToString,
+  sanitizeFilename,
+  convertToMp3,
+  convertToMp4,
+} from "./utils";
+import { connectDB, pool, s3Client } from "./config";
 
 dotenv.config();
 
@@ -16,23 +21,6 @@ ffmpeg.setFfmpegPath(ffmpegStatic as string);
 
 const app = express();
 const port = 3002;
-
-const pool = new Pool({
-  user: process.env.DB_USER || "postgres",
-  host: process.env.DB_HOST || "localhost",
-  database: process.env.DB_NAME || "synergix_remix_vcall",
-  password: process.env.DB_PASSWORD || "postgres",
-  port: parseInt(process.env.DB_PORT || "5432"),
-});
-
-pool
-  .connect()
-  .then(() => {
-    console.log("db connected");
-  })
-  .catch((error) => {
-    console.error(error.message);
-  });
 
 interface RecordingSession {
   browser: any;
@@ -43,35 +31,8 @@ interface RecordingSession {
 
 const activeSessions: Map<string, RecordingSession> = new Map();
 
+connectDB()
 app.use(express.json());
-
-function checkAWSCredentials() {
-  const accessKeyId = process.env.AWS_ACCESS_KEY;
-  const secretAccessKey = process.env.AWS_SECRET_KEY;
-
-  if (!accessKeyId || !secretAccessKey) {
-    throw new Error(
-      "AWS credentials are missing. Please set AWS_ACCESS_KEY and AWS_SECRET_KEY environment variables."
-    );
-  }
-
-  return { accessKeyId, secretAccessKey };
-}
-
-let s3Client: S3Client;
-try {
-  const { accessKeyId, secretAccessKey } = checkAWSCredentials();
-  s3Client = new S3Client({
-    region: "ap-southeast-1",
-    credentials: {
-      accessKeyId,
-      secretAccessKey,
-    },
-  });
-} catch (error) {
-  console.error("Error initializing S3 client:", error);
-  process.exit(1);
-}
 
 async function uploadToS3(filePath: string, directoryName: string) {
   if (!s3Client) {
@@ -173,116 +134,6 @@ app.get("/start", async (req, res) => {
   }
 });
 
-// app.get("/stop", async (req, res) => {
-//   const url = req.query.url as string;
-
-//   if (!url) {
-//     return res.status(400).json({ error: "Missing url query parameter" });
-//   }
-
-//   console.log("Stop endpoint called for URL:", url);
-
-//   try {
-//     const session = activeSessions.get(url);
-//     if (!session) {
-//       return res
-//         .status(400)
-//         .json({ error: "No active recording found for the given URL" });
-//     }
-
-//     const { browser, page, recorder, directoryName } = session;
-
-//     recorder.close();
-//     await page.close();
-//     await browser.close();
-
-//     const outputPath = path.join(recordingsDir, directoryName);
-//     const fileName = fs
-//       .readdirSync(outputPath)
-//       .find((file) => file.endsWith(".webm"))
-//       ?.replace(".webm", "");
-
-//     if (!fileName) {
-//       throw new Error("WebM file not found in the output directory");
-//     }
-
-//     const webmPath = path.join(outputPath, `${fileName}.webm`);
-//     const mp4Path = path.join(outputPath, `video.mp4`);
-//     const mp3Path = path.join(outputPath, `audio.mp3`);
-
-//     console.log("WebM file path:", webmPath);
-
-//     if (!fs.existsSync(webmPath)) {
-//       throw new Error(`WebM file not found: ${webmPath}`);
-//     }
-
-//     console.log(`Converting ${webmPath} to MP4 and MP3`);
-
-//     await Promise.all([
-//       new Promise<void>((resolve, reject) => {
-//         ffmpeg()
-//           .input(webmPath) // Set the input WebM file to be converted
-//           .outputOptions("-c:v libx264") // Use the H.264 video codec for MP4 output
-//           .outputOptions("-crf 28") // Set the Constant Rate Factor (CRF) for video quality (higher CRF = lower quality)
-//           .outputOptions("-preset faster") // Set a faster preset for quicker encoding
-//           .outputOptions("-c:a aac") // Use AAC audio codec for MP4 output
-//           .outputOptions("-b:a 64k") // Set audio bitrate for MP4
-//           .outputOptions("-vf scale=640:-2") // Scale video to 640 pixels wide, maintain aspect ratio
-//           .output(mp4Path) // Specify the output path for MP4 file
-//           .on("end", () => resolve()) // Resolve promise when conversion completes
-//           .on("error", (err) => reject(err)) // Reject promise on error
-//           .run(); // Execute ffmpeg conversion
-//       }),
-//       new Promise<void>((resolve, reject) => {
-//         ffmpeg(webmPath) // Set the input WebM file to be converted
-//           .outputOptions("-vn") // Disable video output
-//           .outputOptions("-c:a libmp3lame") // Use MP3 audio codec (libmp3lame) for MP3 output
-//           .outputOptions("-b:a 64k") // Set audio bitrate for MP3
-//           .output(mp3Path) // Specify the output path for MP3 file
-//           .on("end", () => resolve()) // Resolve promise when conversion completes
-//           .on("error", (err) => reject(err)) // Reject promise on error
-//           .run(); // Execute ffmpeg conversion
-//       }),
-//     ]);
-
-//     console.log("Conversion completed");
-
-//     let mp4Url, mp3Url;
-//     try {
-//       mp4Url = await uploadToS3(mp4Path, directoryName);
-//       mp3Url = await uploadToS3(mp3Path, directoryName);
-
-//       fs.unlinkSync(webmPath);
-//       fs.unlinkSync(mp4Path);
-//       fs.unlinkSync(mp3Path);
-//     } catch (uploadError) {
-//       console.error("Error uploading files to S3:", uploadError);
-//       mp4Url = `local://${mp4Path}`;
-//       mp3Url = `local://${mp3Path}`;
-//     }
-
-//     activeSessions.delete(url);
-
-//     fs.rm(outputPath, { recursive: true, force: true }, (err) => {
-//       if (err) console.error("Failed to delete recording directory:", err);
-//     });
-
-//     activeSessions.delete(url);
-
-//     res.json({
-//       message: "Recording stopped, saved, and converted to MP4 and MP3",
-//       mp4Url,
-//       mp3Url,
-//     });
-//   } catch (error) {
-//     console.error("Error stopping recording or converting:", error);
-//     res.status(500).json({
-//       error: "Failed to stop recording or convert files",
-//       details: (error as Error).message,
-//     });
-//   }
-// });
-
 app.get("/stop", async (req, res) => {
   const url = req.query.url as string;
   const roomId = req.query.roomId as string;
@@ -379,36 +230,6 @@ async function processRecording(directoryName: string, roomId: string) {
   console.log("Recording processed successfully:", { mp4Url, mp3Url });
 }
 
-function convertToMp4(input: string, output: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input(input)
-      .outputOptions("-c:v libx264")
-      .outputOptions("-crf 28")
-      .outputOptions("-preset faster")
-      .outputOptions("-c:a aac")
-      .outputOptions("-b:a 64k")
-      .outputOptions("-vf scale=640:-2")
-      .output(output)
-      .on("end", () => resolve())
-      .on("error", (err) => reject(err))
-      .run();
-  });
-}
-
-function convertToMp3(input: string, output: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    ffmpeg(input)
-      .outputOptions("-vn")
-      .outputOptions("-c:a libmp3lame")
-      .outputOptions("-b:a 64k")
-      .output(output)
-      .on("end", () => resolve())
-      .on("error", (err) => reject(err))
-      .run();
-  });
-}
-
 async function saveRecordingInfo(
   mp3Url: string,
   mp4Url: string,
@@ -420,7 +241,7 @@ async function saveRecordingInfo(
       {
         method: "POST",
         headers: {
-          "app-key": process.env.SYNERGIX_API_KEY as string
+          "app-key": process.env.SYNERGIX_API_KEY as string,
         },
         body: JSON.stringify({
           room: roomId,
@@ -428,6 +249,7 @@ async function saveRecordingInfo(
         }),
       }
     );
+    const checkRoom = await pool.query('SELECT "CALL" WHERE roomId = $1 ',[roomId])
     await pool.query(
       'UPDATE "Call" SET "mp3Url" = $1, "mp4Url" = $2 WHERE roomId = $3',
       [mp3Url, mp4Url, roomId]
