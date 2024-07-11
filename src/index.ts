@@ -173,116 +173,6 @@ app.get("/start", async (req, res) => {
   }
 });
 
-// app.get("/stop", async (req, res) => {
-//   const url = req.query.url as string;
-
-//   if (!url) {
-//     return res.status(400).json({ error: "Missing url query parameter" });
-//   }
-
-//   console.log("Stop endpoint called for URL:", url);
-
-//   try {
-//     const session = activeSessions.get(url);
-//     if (!session) {
-//       return res
-//         .status(400)
-//         .json({ error: "No active recording found for the given URL" });
-//     }
-
-//     const { browser, page, recorder, directoryName } = session;
-
-//     recorder.close();
-//     await page.close();
-//     await browser.close();
-
-//     const outputPath = path.join(recordingsDir, directoryName);
-//     const fileName = fs
-//       .readdirSync(outputPath)
-//       .find((file) => file.endsWith(".webm"))
-//       ?.replace(".webm", "");
-
-//     if (!fileName) {
-//       throw new Error("WebM file not found in the output directory");
-//     }
-
-//     const webmPath = path.join(outputPath, `${fileName}.webm`);
-//     const mp4Path = path.join(outputPath, `video.mp4`);
-//     const mp3Path = path.join(outputPath, `audio.mp3`);
-
-//     console.log("WebM file path:", webmPath);
-
-//     if (!fs.existsSync(webmPath)) {
-//       throw new Error(`WebM file not found: ${webmPath}`);
-//     }
-
-//     console.log(`Converting ${webmPath} to MP4 and MP3`);
-
-//     await Promise.all([
-//       new Promise<void>((resolve, reject) => {
-//         ffmpeg()
-//           .input(webmPath) // Set the input WebM file to be converted
-//           .outputOptions("-c:v libx264") // Use the H.264 video codec for MP4 output
-//           .outputOptions("-crf 28") // Set the Constant Rate Factor (CRF) for video quality (higher CRF = lower quality)
-//           .outputOptions("-preset faster") // Set a faster preset for quicker encoding
-//           .outputOptions("-c:a aac") // Use AAC audio codec for MP4 output
-//           .outputOptions("-b:a 64k") // Set audio bitrate for MP4
-//           .outputOptions("-vf scale=640:-2") // Scale video to 640 pixels wide, maintain aspect ratio
-//           .output(mp4Path) // Specify the output path for MP4 file
-//           .on("end", () => resolve()) // Resolve promise when conversion completes
-//           .on("error", (err) => reject(err)) // Reject promise on error
-//           .run(); // Execute ffmpeg conversion
-//       }),
-//       new Promise<void>((resolve, reject) => {
-//         ffmpeg(webmPath) // Set the input WebM file to be converted
-//           .outputOptions("-vn") // Disable video output
-//           .outputOptions("-c:a libmp3lame") // Use MP3 audio codec (libmp3lame) for MP3 output
-//           .outputOptions("-b:a 64k") // Set audio bitrate for MP3
-//           .output(mp3Path) // Specify the output path for MP3 file
-//           .on("end", () => resolve()) // Resolve promise when conversion completes
-//           .on("error", (err) => reject(err)) // Reject promise on error
-//           .run(); // Execute ffmpeg conversion
-//       }),
-//     ]);
-
-//     console.log("Conversion completed");
-
-//     let mp4Url, mp3Url;
-//     try {
-//       mp4Url = await uploadToS3(mp4Path, directoryName);
-//       mp3Url = await uploadToS3(mp3Path, directoryName);
-
-//       fs.unlinkSync(webmPath);
-//       fs.unlinkSync(mp4Path);
-//       fs.unlinkSync(mp3Path);
-//     } catch (uploadError) {
-//       console.error("Error uploading files to S3:", uploadError);
-//       mp4Url = `local://${mp4Path}`;
-//       mp3Url = `local://${mp3Path}`;
-//     }
-
-//     activeSessions.delete(url);
-
-//     fs.rm(outputPath, { recursive: true, force: true }, (err) => {
-//       if (err) console.error("Failed to delete recording directory:", err);
-//     });
-
-//     activeSessions.delete(url);
-
-//     res.json({
-//       message: "Recording stopped, saved, and converted to MP4 and MP3",
-//       mp4Url,
-//       mp3Url,
-//     });
-//   } catch (error) {
-//     console.error("Error stopping recording or converting:", error);
-//     res.status(500).json({
-//       error: "Failed to stop recording or convert files",
-//       details: (error as Error).message,
-//     });
-//   }
-// });
-
 app.get("/stop", async (req, res) => {
   const url = req.query.url as string;
   const roomId = req.query.roomId as string;
@@ -424,7 +314,8 @@ async function saveRecordingInfo(
         },
         body: JSON.stringify({
           room: roomId,
-          url: mp4Url,
+          mp4_url: mp4Url,
+          mp3_url: mp3Url,
         }),
       }
     );
