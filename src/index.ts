@@ -253,18 +253,34 @@ async function processRecording(directoryName: string, roomId: string) {
 
     const recordingResult = await saveRecordingInfo(mp3Url, mp4Url, roomId);
 
+    const fetchSave = await fetch(
+      `${process.env.SYNERGIX_API_URL}/vcall/record`,
+      {
+        method: "POST",
+        headers: {
+          "app-key": process.env.SYNERGIX_API_KEY as string,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          room: roomId,
+          mp4_url: mp4Url,
+          mp3_url: mp3Url,
+        }),
+      }
+    );
+    const fetchSaveData = await fetchSave.json()
+    console.log(fetchSaveData)
+
     fs.unlinkSync(webmPath);
     fs.unlinkSync(mp4Path);
     fs.unlinkSync(mp3Path);
+    fs.rmdirSync(outputPath, { recursive: true });
+
   } catch (uploadError) {
     console.error("Error uploading files to S3:", uploadError);
     mp4Url = `local://${mp4Path}`;
     mp3Url = `local://${mp3Path}`;
   }
-
-  fs.rm(outputPath, { recursive: true, force: true }, (err) => {
-    if (err) console.error("Failed to delete recording directory:", err);
-  });
 
   console.log("Recording processed successfully:", { mp4Url, mp3Url });
 }
@@ -305,22 +321,8 @@ async function saveRecordingInfo(
   roomId: string
 ) {
   try {
-    const fetchSave = await fetch(
-      `${process.env.SYNERGIX_API_URL}/vcall/record`,
-      {
-        method: "POST",
-        headers: {
-          "app-key": process.env.SYNERGIX_API_KEY as string
-        },
-        body: JSON.stringify({
-          room: roomId,
-          mp4_url: mp4Url,
-          mp3_url: mp3Url,
-        }),
-      }
-    );
     await pool.query(
-      'UPDATE "Call" SET "mp3Url" = $1, "mp4Url" = $2 WHERE roomId = $3',
+      'UPDATE "Call" SET "mp3Url" = $1, "mp4Url" = $2 WHERE "roomId" = $3',
       [mp3Url, mp4Url, roomId]
     );
     console.log("Recording info saved to database");
