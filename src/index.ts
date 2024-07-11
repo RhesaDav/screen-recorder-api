@@ -319,6 +319,9 @@ async function saveRecordingInfo(
         }),
       }
     );
+
+    console.log("save path to synergix : ", fetchSave.json());
+
     await pool.query(
       'UPDATE "Call" SET "mp3Url" = $1, "mp4Url" = $2 WHERE roomId = $3',
       [mp3Url, mp4Url, roomId]
