@@ -15,7 +15,7 @@ dotenv.config();
 ffmpeg.setFfmpegPath(ffmpegStatic as string);
 
 const app = express();
-const port = 3002;
+const port = process.env.PORT || 3002;
 
 const pool = new Pool({
   user: process.env.DB_USER || "postgres",
@@ -131,7 +131,7 @@ app.get("/start", async (req, res) => {
     const context = browser.defaultBrowserContext();
     await context.overridePermissions(urlObj.origin, ["microphone", "camera"]);
     const page = await browser.newPage();
-    await page.goto(urlObj.href);
+    await page.goto(urlObj.href, {timeout: 120000});
 
     const stream = await getStream(page, {
       audio: true,
@@ -158,7 +158,7 @@ app.get("/start", async (req, res) => {
 
     console.log("Recording started. Directory name:", directoryName);
 
-    res.json({
+    res.status(200).json({
       message: "Recording started",
       directoryName,
       fileName,
@@ -199,7 +199,7 @@ app.get("/stop", async (req, res) => {
 
     activeSessions.delete(url);
 
-    res.json({
+    res.status(200).json({
       message: "Recording stopped. Converting and uploading in progress.",
       status: "processing",
     });
